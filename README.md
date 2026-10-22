@@ -1,113 +1,128 @@
-# 🏎️ Arduino Bluetooth RC Car
+# Arduino RC Car
 
-A lightweight, high-performance Arduino firmware designed to control a 2-wheel drive (2WD) robotic car via Bluetooth or Serial communication. This project was developed as part of the **University ARP (Arduino Programming)** curriculum.
+**A compact serial-command controller for a two-motor RC car.**
 
----
+This Arduino sketch maps single-character commands to forward, reverse, and stop states for two motor-driver channels. It uses four digital outputs and the board's `Serial` interface at 9600 baud. A compatible serial Bluetooth module can provide the command transport; the sketch itself does not implement Bluetooth pairing or a wireless protocol.
 
-## 🚀 Overview
+Originally documented as an Arduino Programming coursework project. The repository focuses on the firmware rather than a complete, verified hardware kit.
 
-This firmware implements a robust command-processing engine that translates Serial signals into precise motor movements. By utilizing a simple character-based protocol, the car can be controlled via a smartphone app, computer serial monitor, or any Bluetooth-enabled device.
+> **Important:** there is no command timeout or disconnect failsafe. If input stops after a movement command, the last motor output remains set. Read [hardware safety and limitations](SAFETY.md) before powering a vehicle.
 
-## ✨ Key Features
+## What is implemented
 
-- **Binary Motor Logic**: High-speed switching between Forward, Reverse, and Stop states.
-- **Diagonal Steering**: Dedicated handlers for diagonal movements (`G`, `I`, `H`, `J`).
-- **Safety First**: Automatic "Stop" logic for unrecognized commands or serial timeouts.
-- **Optimized Footprint**: Uses `constexpr` for pin definitions and `inline` functions to reduce execution overhead.
+- Independent forward, reverse, and stop output states for the left and right channels.
+- Forward/reverse driving and single-motor steering commands.
+- Stop commands and a stop response for unrecognised characters.
+- Compatibility no-ops for speed and accessory command characters.
+- Stopped outputs during `setup()`.
+- No external library includes beyond `Arduino.h`.
 
-## 🛠️ Tech Stack
+There is no PWM speed control, autonomous navigation, obstacle detection, telemetry, authentication, or Bluetooth configuration in the supplied sketch.
 
-- **Microcontroller**: Arduino (Atmega328P based boards like Uno/Nano recommended).
-- **Motor Driver**: L298N, L293D, or similar H-Bridge modules.
-- **Communication**: HC-05/HC-06 Bluetooth Module (Serial UART).
-- **Tooling**: Arduino IDE 2.0+, C++11.
+## Control flow
 
----
-
-## 🔌 Hardware Architecture
-
-### Pin Mapping
-
-| Component | Arduino Pin | Function | Logic |
-|-----------|-------------|----------|-------|
-| **L1**    | 13          | Left Motor A | `HIGH` = Forward |
-| **L2**    | 12          | Left Motor B | `HIGH` = Reverse |
-| **R1**    | 11          | Right Motor A | `HIGH` = Forward |
-| **R2**    | 10          | Right Motor B | `HIGH` = Reverse |
-
-### Data Flow Diagram
-
-```mermaid
-graph LR
-    A[Smartphone App] -- Bluetooth --> B[HC-05 Module]
-    B -- Serial 9600 bps --> C[Arduino Uno]
-    C -- Digital Signal --> D[Motor Driver]
-    D -- Power --> E[DC Motors]
+```text
+Serial input at 9600 baud
+          |
+      handle(char)
+          |
+   drive(left, right)
+          |
+   setMotor(a, b, direction)
+          |
+   Four digital control outputs
+          |
+   External motor driver and motors
 ```
 
----
+## Output mapping
 
-## 🎮 Command Protocol
+These are Arduino digital pin numbers, not physical package-pin numbers or motor-driver terminal numbers.
 
-The firmware listens for ASCII characters at **9600 baud**. Below is the mapping of characters to physical movements:
+| Symbol | Digital pin | Logical role |
+| --- | --- | --- |
+| `L1` | 13 | Left channel forward input |
+| `L2` | 12 | Left channel reverse input |
+| `R1` | 11 | Right channel forward input |
+| `R2` | 10 | Right channel reverse input |
 
-| Char | Action | Motor Logic (L, R) |
-|:----:|:-------|:-------------------|
-| `F`  | Forward | (FWD, FWD) |
-| `B`  | Backward | (REV, REV) |
-| `L`  | Left | (STOP, FWD) |
-| `R`  | Right | (FWD, STOP) |
-| `G`  | Forward-Right* | (FWD, STOP) |
-| `I`  | Forward-Left* | (STOP, FWD) |
-| `H`  | Back-Left | (REV, STOP) |
-| `J`  | Back-Right | (STOP, REV) |
-| `S`/`D` | Stop | (STOP, STOP) |
+For each channel, the sketch writes:
 
-*\*Note: In this implementation, 'G' and 'R' trigger the same movement (Left motor only), while 'I' and 'L' trigger the same movement (Right motor only).*
+| Requested state | First input | Second input |
+| --- | --- | --- |
+| `FWD` | HIGH | LOW |
+| `REV` | LOW | HIGH |
+| `STOP` | LOW | LOW |
 
----
+`STOP` describes the requested input pattern, not a verified braking mode. Electrical behaviour depends on the actual driver, enable configuration, wiring, and load. No driver enable pins are managed by this sketch.
 
-## 🔧 Installation & Setup
+## Command protocol
 
-### 1. Circuit Assembly
-1. Connect the **L298N Motor Driver** pins 10, 11, 12, and 13 to the Arduino.
-2. Connect your 7V-12V battery pack to the L298N power input.
-3. Wire the Bluetooth module:
-   - **VCC** → 5V
-   - **GND** → GND
-   - **TX** → Arduino **RX (Pin 0)**
-   - **RX** → Arduino **TX (Pin 1)**
+Commands are case-sensitive single characters. The table records exact channel states; physical steering direction depends on assembly and motor polarity.
 
-### 2. Uploading Code
-> [!WARNING]
-> **IMPORTANT:** You must disconnect the Bluetooth module's RX and TX wires from the Arduino before clicking "Upload". Failure to do so will result in an `avrdude: stk500_getsync()` error.
+| Character | Left channel | Right channel | Behaviour |
+| --- | --- | --- | --- |
+| `F` | FWD | FWD | Both channels forward |
+| `B` | REV | REV | Both channels reverse |
+| `L` | STOP | FWD | Right channel only, forward |
+| `R` | FWD | STOP | Left channel only, forward |
+| `G` | FWD | STOP | Same output as `R` |
+| `I` | STOP | FWD | Same output as `L` |
+| `H` | REV | STOP | Left channel only, reverse |
+| `J` | STOP | REV | Right channel only, reverse |
+| `S`, `D` | STOP | STOP | Stop both channels |
+| `0`–`9`, `q` | Unchanged | Unchanged | Speed characters ignored |
+| `W`, `w`, `U`, `u`, `V`, `v`, `X`, `x` | Unchanged | Unchanged | Accessory characters ignored |
+| Any other character | STOP | STOP | Default stop |
 
-1. Open `RC_Car.ino` in your Arduino IDE.
-2. Select **Tools > Board > Arduino Uno**.
-3. Select the correct **Port**.
-4. Click **Upload**.
-5. Reconnect the Bluetooth wires.
+Ignored commands do **not** stop an already moving car. Uppercase `Q` is not the lowercase `q` speed no-op; it reaches the default stop case.
 
-### 3. Pairing and Control
-1. Power on the car. The Bluetooth LED should blink rapidly.
-2. Search for "HC-05" or "HC-06" on your phone.
-3. Pair using `1234` or `0000`.
-4. Use the **"Arduino Bluetooth RC Car"** app (or any terminal app) to send commands.
+### Serial line endings matter
 
----
+Carriage return and newline are unrecognised characters, so either requests a stop. When testing single movement commands in a serial monitor, select **No line ending**. Sending `F` followed by a newline requests forward and then stop, which can look like an unresponsive controller.
 
-## 🧠 Code Breakdown
+The loop drains all available bytes in order. There is no acknowledgement message or status output.
 
-### `setMotor(uint8_t a, uint8_t b, Dir d)`
-This inline function handles the H-bridge logic. It ensures that both pins of a motor are never `HIGH` at the same time, preventing short circuits in the driver.
+## Opening and uploading
 
-### `handle(char c)`
-The core switch-case logic that parses serial input. It ignores speed commands (`0-9`, `q`) to maintain compatibility with apps that send analog speed data, while executing the digital direction commands.
+The supplied source is [RC_Car.ino](RC_Car.ino). Arduino requires the primary `.ino` filename to match its sketch folder. For local use, keep a working copy at:
 
----
+```text
+RC_Car/
+  RC_Car.ino
+```
 
-## 📜 License & Acknowledgments
+This local sketch folder is independent of the recommended GitHub repository name, `arduino-rc-car`. The documentation refresh does not move or rename the source file.
 
-- Developed for **NUM University** (Year 2, Semester 1).
-- Based on standard Bluetooth RC car protocols.
-- Free to use for educational purposes.
+1. Prepare the matching sketch folder and open `RC_Car.ino` in Arduino IDE.
+2. Select the board/core and port for your actual hardware. No specific board or core version is verified by this repository.
+3. Verify/compile before uploading. Keep motor power isolated during initial upload and inspection.
+4. Upload, then test the serial protocol at 9600 baud with the vehicle restrained and wheels clear of the surface.
+5. Confirm explicit stop behaviour and every channel direction before any floor test.
+
+If external hardware shares the board's upload serial interface, consult that board and module's documentation before connecting or disconnecting it. The repository does not establish universal UART pins, supply voltages, pairing codes, or a guaranteed upload-error cause.
+
+[Arduino sketch-folder specification](https://docs.arduino.cc/arduino-cli/sketch-specification/)
+
+## Hardware scope
+
+The previous README named Uno/Nano boards, HC-05/HC-06 modules, and L298N/L293D drivers as possible components. The export contains no schematic, bill of materials, board configuration, or hardware test evidence to establish an exact compatible assembly.
+
+Use the actual board, driver, module, motor, and power-supply documentation to determine wiring, logic levels, enable inputs, protection, and ratings. Do not treat this README as a wiring schematic. See [SAFETY.md](SAFETY.md).
+
+## Repository contents
+
+| File | Purpose |
+| --- | --- |
+| [RC_Car.ino](RC_Car.ino) | Firmware and command dispatch |
+| [SAFETY.md](SAFETY.md) | Hardware boundaries and missing failsafe |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Focused changes and verification expectations |
+| [SECURITY.md](SECURITY.md) | Security reporting and control boundary |
+
+## Verification status
+
+The documentation was checked against the supplied sketch. This refresh did not compile firmware, upload to a board, or test motors, Bluetooth, wiring, or power-loss behaviour. Source inspection is not hardware validation.
+
+## Licence
+
+No licence file is present in the supplied repository. The previous educational-use statement does not specify a complete licence. This refresh does not assign a licence or invent permissions; the owner should choose one explicitly before advertising reuse terms.
